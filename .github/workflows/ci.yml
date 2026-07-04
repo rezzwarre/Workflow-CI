@@ -1,5 +1,9 @@
 name: Workflow CI - Retrain Model with MLflow Project
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 60f664d541167f4dc729d77d0af129d485789fa2
 on:
   push:
     branches: [main]
@@ -13,11 +17,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+<<<<<<< HEAD
      
       - name: Checkout repository
         uses: actions/checkout@v4
 
       
+=======
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+>>>>>>> 60f664d541167f4dc729d77d0af129d485789fa2
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -28,7 +40,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install mlflow==2.22.5 pandas==2.3.3 scikit-learn==1.8.0 numpy==2.2.6
 
+<<<<<<< HEAD
       
+=======
+
+>>>>>>> 60f664d541167f4dc729d77d0af129d485789fa2
       - name: Run MLflow Project (retrain model)
         working-directory: MLProject
         run: |
