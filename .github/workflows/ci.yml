@@ -1,0 +1,153 @@
+name: Workflow CI - Retrain Model with MLflow Project
+
+# ---------------------------------------------------------------------
+# KAPAN WORKFLOW INI TERPICU:
+# 1. Setiap ada push ke branch main yang mengubah dataset preprocessing
+#    atau source code training (memicu re-training otomatis).
+# 2. Bisa juga dipicu manual lewat tab "Actions" (workflow_dispatch).
+# ---------------------------------------------------------------------
+on:
+  push:
+    branches: [main]
+    paths:
+      - "MLProject/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch: {}
+
+jobs:
+  train-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------
+      # 1) Checkout kode repository
+      # -----------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------
+      # 2) Setup Python. Catatan: MLProject punya conda_env (conda.yaml)
+      #    sesuai format standar MLflow Project. Di sini kita jalankan
+      #    `mlflow run` dengan --env-manager=local supaya MLflow TIDAK
+      #    membuat ulang conda environment (proses solve conda di CI
+      #    biasanya lambat, 5-10 menit, dan kadang gagal karena jaringan).
+      #    Sebagai gantinya, dependency di conda.yaml kita install manual
+      #    lewat pip di environment Python bawaan runner ini.
+      #    -> Jika kamu justru INGIN MLflow benar-benar membuat conda env
+      #       sesuai conda.yaml, ganti step ini dengan action
+      #       `conda-incubator/setup-miniconda@v3`, lalu ubah
+      #       `--env-manager=local` menjadi `--env-manager=conda` pada
+      #       step "Run MLflow Project" di bawah.
+      # -----------------------------------------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (sesuai MLProject/conda.yaml)
+        run: |
+          python -m pip install --upgrade pip
+          pip install mlflow==2.22.5 pandas==2.3.3 scikit-learn==1.8.0 numpy==2.2.6
+
+      # -----------------------------------------------------------------
+      # 3) Jalankan MLflow Project -> ini bagian INTI dari kriteria
+      #    "workflow CI menggunakan MLflow Project untuk retraining
+      #    otomatis". Setiap kali workflow ini terpicu, model dilatih
+      #    ulang dari dataset yang ada di MLProject/namadataset_preprocessing.
+      # -----------------------------------------------------------------
+      - name: Run MLflow Project (retrain model)
+        working-directory: MLProject
+        run: |
+          mlflow run . --env-manager=local
+
+      # -----------------------------------------------------------------
+      # 4) SKILLED: simpan artefak (model + hasil tracking) ke repository
+      #    GitHub yang sama, dalam bentuk GitHub Actions artifact.
+      #    Alasan pakai upload-artifact (bukan git commit langsung):
+      #    model.pkl bisa berukuran ratusan MB (RandomForest default
+      #    tanpa depth limit), melebihi batas 100MB untuk commit biasa
+      #    di Git. Artifact GitHub Actions mendukung file berukuran
+      #    besar dan tetap tersimpan di repository GitHub yang sama
+      #    (bisa dilihat & diunduh dari tab "Actions" > run terkait).
+      # -----------------------------------------------------------------
+      - name: Upload trained model as GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model-${{ github.run_number }}
+          path: MLProject/model
+          retention-days: 30
+
+      - name: Upload MLflow tracking metadata (mlruns) as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlruns-${{ github.run_number }}
+          path: MLProject/mlruns
+          retention-days: 30
+
+      # -----------------------------------------------------------------
+      # ALTERNATIF (opsional, dikomentari): commit hasil tracking
+      # (metrics/params saja, TANPA model.pkl yang besar) balik ke repo
+      # yang sama, supaya histori metrik bisa dilihat langsung di Git.
+      # Uncomment jika kamu mau menerapkan ini juga.
+      # -----------------------------------------------------------------
+      # - name: Commit mlruns metadata back to repo (tanpa file model besar)
+      #   uses: stefanzweifel/git-auto-commit-action@v5
+      #   with:
+      #     commit_message: "ci: update mlflow run metadata [automated]"
+      #     file_pattern: "MLProject/mlruns/**/metrics/* MLProject/mlruns/**/params/* MLProject/mlruns/**/tags/*"
+
+      # -----------------------------------------------------------------
+      # ALTERNATIF (opsional, dikomentari): upload artefak ke Google
+      # Drive alih-alih GitHub artifact. Membutuhkan service account
+      # Google + secrets berikut di repo (Settings > Secrets and
+      # variables > Actions):
+      #   GDRIVE_CREDENTIALS  (isi JSON service account, di-base64)
+      #   GDRIVE_FOLDER_ID    (folder tujuan di Google Drive)
+      # -----------------------------------------------------------------
+      # - name: Upload model to Google Drive
+      #   uses: adityak74/google-drive-upload-git-action@main
+      #   with:
+      #     credentials: ${{ secrets.GDRIVE_CREDENTIALS }}
+      #     filename: "MLProject/model/model.pkl"
+      #     folderId: ${{ secrets.GDRIVE_FOLDER_ID }}
+      #     name: "model-${{ github.run_number }}.pkl"
+
+      # -----------------------------------------------------------------
+      # 5) ADVANCE: build Docker image dari model hasil training memakai
+      #    `mlflow models build-docker`, lalu push ke Docker Hub.
+      #
+      #    WAJIB disiapkan sebelum workflow ini bisa push ke Docker Hub:
+      #    a. Buat akun di https://hub.docker.com (jika belum ada).
+      #    b. Buat Access Token: Docker Hub > Account Settings >
+      #       Security > New Access Token.
+      #    c. Tambahkan 2 secrets di GitHub repo ini:
+      #       Settings > Secrets and variables > Actions > New repository secret
+      #         - DOCKERHUB_USERNAME  = username Docker Hub kamu
+      #         - DOCKERHUB_TOKEN     = access token yang dibuat di poin (b)
+      #    d. Ganti "flower-species-classifier" di bawah dengan nama
+      #       image sesuai keinginan kamu.
+      #    e. Setelah image berhasil ter-push, update isi file
+      #       `MLProject/Tautan_ke_Docker_Hub.txt` dengan URL Docker Hub
+      #       image kamu, contoh:
+      #       https://hub.docker.com/r/<username>/flower-species-classifier
+      # -----------------------------------------------------------------
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image from MLflow model
+        working-directory: MLProject
+        run: |
+          mlflow models build-docker \
+            -m model \
+            -n ${{ secrets.DOCKERHUB_USERNAME }}/flower-species-classifier \
+            --enable-mlserver
+
+      - name: Tag and push Docker image to Docker Hub
+        run: |
+          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/flower-species-classifier:latest \
+            ${{ secrets.DOCKERHUB_USERNAME }}/flower-species-classifier:${{ github.run_number }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/flower-species-classifier:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/flower-species-classifier:${{ github.run_number }}
