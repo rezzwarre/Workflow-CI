@@ -9,7 +9,7 @@ import mlflow.sklearn
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATASET_PATH = os.path.join(BASE_DIR, "namadataset_preprocessing", "flower_morphometrics_preprocessed.csv")
+DATASET_PATH = os.path.join(BASE_DIR, "dataset_preprocessing", "flower_morphometrics_preprocessed.csv")
 OUTPUT_MODEL_DIR = os.path.join(BASE_DIR, "model")
 TARGET_COLUMN = "species"
 
